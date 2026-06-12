@@ -4,12 +4,10 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'formulario_screen.dart';
 
-// ─── Colores globales del archivo ─────────────────────────────────────────────
 const _verde    = Color(0xFF588b22);
 const _azulLink = Color(0xFF2c4b8b);
 const _fondo    = Color(0xFFF7F8FA);
 
-// ─── Pantalla principal ───────────────────────────────────────────────────────
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -40,9 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _error = 'Ingresa tu matrícula');
       return;
     }
-
     setState(() { _cargando = true; _error = null; });
-
     try {
       final response = await http.post(
         Uri.parse('$_urlBase/site/matriculaValida'),
@@ -57,7 +53,6 @@ class _LoginScreenState extends State<LoginScreen> {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('matricula', matricula);
           await prefs.setString('nombre', nombre);
-
           if (!mounted) return;
           Navigator.pushReplacement(
             context,
@@ -81,7 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
           context,
           MaterialPageRoute(
             builder: (_) => FormularioScreen(
-              matricula: saved,           
+              matricula: saved,
               nombreTecnico: prefs.getString('nombre') ?? saved,
             ),
           ),
@@ -89,234 +84,223 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
       setState(() => _error = 'Sin conexión y matrícula no reconocida');
+    } finally {
+      if (mounted) setState(() => _cargando = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final size   = MediaQuery.of(context).size;
+    final ancho  = size.width;
+    final alto   = size.height;
+
+    // Escala proporcional: todo se calcula como % del ancho
+    // En teléfono (360dp) → factores pequeños
+    // En Pixel Tablet (~800dp portrait) → factores grandes automáticamente
+    final escala = ancho / 400; // 400dp es la base de referencia
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF0F2F5),
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 428),
+        child: SizedBox(
+          width:  ancho,
+          height: alto,
+          child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: 48),
-                  const _Logo(),
-                  const SizedBox(height: 40),
-                  _Formulario(
-                    matriculaCtrl: _matriculaCtrl,
-                    passCtrl:      _passCtrl,
-                    verPass:       _verPass,
-                    error:         _error,
-                    cargando:      _cargando,
-                    onTogglePass:  () => setState(() => _verPass = !_verPass),
-                    onEntrar:      _entrar,
-                  ),
-                  const SizedBox(height: 32),
-                  const _Footer(),
-                ],
+              child: SizedBox(
+                // La tarjeta ocupa 85% del ancho, máximo 700dp
+                width: (ancho * 0.85).clamp(280, 700),
+                child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 40 * escala.clamp(1, 1.8),
+                  vertical:   40 * escala.clamp(1, 1.8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+
+                    // ── Logo ──────────────────────────────────────────────
+                    Column(
+                      children: [
+                        Image.asset(
+                          'assets/images/logo_imss.png',
+                          width:  100 * escala.clamp(1, 1.8),
+                          height: 100 * escala.clamp(1, 1.8),
+                          fit: BoxFit.contain,
+                        ),
+                        SizedBox(height: 16 * escala.clamp(1, 1.5)),
+                        Text(
+                          'Tu Perfil IMSS',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize:      26 * escala.clamp(1, 1.6),
+                            fontWeight:    FontWeight.bold,
+                            color:         const Color(0xFF333333),
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        SizedBox(height: 6 * escala.clamp(1, 1.5)),
+                        Text(
+                          'Inicia sesión',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize:   14 * escala.clamp(1, 1.6),
+                            fontWeight: FontWeight.w500,
+                            color:      const Color(0xFF374151),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    SizedBox(height: 32 * escala.clamp(1, 1.5)),
+
+                    // ── Matrícula ─────────────────────────────────────────
+                    Text(
+                      'Matrícula',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize:   13 * escala.clamp(1, 1.6),
+                        color:      const Color(0xFF333333),
+                      ),
+                    ),
+                    SizedBox(height: 6 * escala.clamp(1, 1.4)),
+                    TextField(
+                      controller:   _matriculaCtrl,
+                      keyboardType: TextInputType.number,
+                      style: TextStyle(fontSize: 14 * escala.clamp(1, 1.6)),
+                      decoration:   _deco(
+                        'Ingresa tu matrícula',
+                        escala: escala,
+                      ).copyWith(errorText: _error),
+                      onSubmitted: (_) => _entrar(),
+                    ),
+
+                    SizedBox(height: 20 * escala.clamp(1, 1.4)),
+
+                    // ── Contraseña ────────────────────────────────────────
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Contraseña',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize:   13 * escala.clamp(1, 1.6),
+                            color:      const Color(0xFF333333),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 6 * escala.clamp(1, 1.4)),
+                    TextField(
+                      controller:  _passCtrl,
+                      obscureText: !_verPass,
+                      style: TextStyle(fontSize: 14 * escala.clamp(1, 1.6)),
+                      decoration: _deco(
+                        'Ingresa tu contraseña',
+                        escala: escala,
+                        suffix: IconButton(
+                          icon: Icon(
+                            _verPass
+                                ? Icons.visibility
+                                : Icons.visibility_off,
+                            color: Colors.grey,
+                            size:  20 * escala.clamp(1, 1.6),
+                          ),
+                          onPressed: () =>
+                              setState(() => _verPass = !_verPass),
+                        ),
+                      ),
+                      onSubmitted: (_) => _entrar(),
+                    ),
+
+                    SizedBox(height: 28 * escala.clamp(1, 1.5)),
+
+                    // ── Botón ─────────────────────────────────────────────
+                    SizedBox(
+                      height: 50 * escala.clamp(1, 1.6),
+                      child: ElevatedButton(
+                        onPressed: _cargando ? null : _entrar,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _verde,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                                6 * escala.clamp(1, 1.5)),
+                          ),
+                          elevation: 3,
+                          textStyle: TextStyle(
+                            fontSize:   16 * escala.clamp(1, 1.6),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        child: _cargando
+                            ? CircularProgressIndicator(
+                                color:       Colors.white,
+                                strokeWidth: 2 * escala.clamp(1, 1.5),
+                              )
+                            : const Text('Iniciar sesión'),
+                      ),
+                    ),
+
+                    SizedBox(height: 24 * escala.clamp(1, 1.4)),
+
+                    // ── Footer ───────────────────────────────────────────
+                    SizedBox(height: 10 * escala.clamp(1, 1.4)),
+                    Center(
+                      child: GestureDetector(
+                        onTap: () {},
+                        child: Text(
+                          'Aviso de privacidad',
+                          style: TextStyle(
+                            fontSize: 12 * escala.clamp(1, 1.6),
+                            color:    _azulLink,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
-    );
-  }
-}
-
-// ─── Logo ─────────────────────────────────────────────────────────────────────
-class _Logo extends StatelessWidget {
-  const _Logo();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Image.asset(
-          'assets/images/logo_imss.png',
-          width: 120,
-          height: 120,
-          fit: BoxFit.contain,   // respeta proporciones sin recortar
-        ),
-        const SizedBox(height: 24),
-        const Text(
-          'Inicia Sesión',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 28, fontWeight: FontWeight.bold,
-            color: Color(0xFF333333), letterSpacing: -0.5,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ─── Painter del logo ─────────────────────────────────────────────────────────
-class _LogoPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = _verde..style = PaintingStyle.fill;
-    final s = size.width / 100;
-
-    canvas.drawCircle(Offset(50 * s, 25 * s), 10 * s, paint);
-
-    canvas.drawPath(
-      Path()
-        ..moveTo(50 * s, 40 * s)
-        ..lineTo(25 * s, 60 * s)
-        ..lineTo(35 * s, 75 * s)
-        ..lineTo(50 * s, 65 * s)
-        ..lineTo(65 * s, 75 * s)
-        ..lineTo(75 * s, 60 * s)
-        ..close(),
-      paint,
-    );
+    ));
   }
 
-  @override
-  bool shouldRepaint(covariant CustomPainter old) => false;
-}
-
-// ─── Formulario ───────────────────────────────────────────────────────────────
-class _Formulario extends StatelessWidget {
-  final TextEditingController matriculaCtrl;
-  final TextEditingController passCtrl;
-  final bool     verPass;
-  final String?  error;
-  final bool     cargando;
-  final VoidCallback onTogglePass;
-  final VoidCallback onEntrar;
-
-  const _Formulario({
-    required this.matriculaCtrl,
-    required this.passCtrl,
-    required this.verPass,
-    required this.error,
-    required this.cargando,
-    required this.onTogglePass,
-    required this.onEntrar,
-  });
-
-  InputDecoration _deco(String hint) => InputDecoration(
-    hintText: hint,
-    hintStyle: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
-    filled: true,
-    fillColor: _fondo,
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(4),
-      borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(4),
-      borderSide: const BorderSide(color: _verde, width: 2),
-    ),
-    errorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(4),
-      borderSide: const BorderSide(color: Colors.red),
-    ),
-    focusedErrorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(4),
-      borderSide: const BorderSide(color: Colors.red, width: 2),
-    ),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-  );
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-
-        // ── Matrícula ──
-        const Text('Matrícula',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13,
-                color: Color(0xFF333333))),
-        const SizedBox(height: 6),
-        TextField(
-          controller: matriculaCtrl,
-          keyboardType: TextInputType.number,
-          decoration: _deco('Ingresa tu matrícula').copyWith(errorText: error),
-          onSubmitted: (_) => onEntrar(),
-        ),
-        const SizedBox(height: 20),
-
-        // ── Contraseña ──
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Contraseña',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13,
-                    color: Color(0xFF333333))),
-          ],
-        ),
-        const SizedBox(height: 6),
-        TextField(
-          controller: passCtrl,
-          obscureText: !verPass,
-          decoration: _deco('Ingresa tu contraseña').copyWith(
-            suffixIcon: IconButton(
-              icon: Icon(
-                verPass ? Icons.visibility : Icons.visibility_off,
-                color: Colors.grey, size: 20,
-              ),
-              onPressed: onTogglePass,
-            ),
-          ),
-          onSubmitted: (_) => onEntrar(),
-        ),
-        const SizedBox(height: 32),
-
-        // ── Botón ──
-        SizedBox(
-          width: double.infinity, height: 52,
-          child: ElevatedButton(
-            onPressed: cargando ? null : onEntrar,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _verde,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6)),
-              elevation: 3,
-              textStyle: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-            child: cargando
-                ? const CircularProgressIndicator(
-                    color: Colors.white, strokeWidth: 2)
-                : const Text('Iniciar sesión'),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ─── Footer ───────────────────────────────────────────────────────────────────
-class _Footer extends StatelessWidget {
-  const _Footer();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        const SizedBox(height: 16),
-        const Text('Aviso de privacidad',
-            style: TextStyle(fontSize: 12, color: _azulLink)),
-        const SizedBox(height: 24),
-        Container(
-          width: 128, height: 4,
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-      ],
+  // ── Decoración de inputs ───────────────────────────────────────────────────
+  InputDecoration _deco(String hint, {required double escala, Widget? suffix}) {
+    return InputDecoration(
+      hintText:   hint,
+      hintStyle:  TextStyle(
+        color:    const Color(0xFF9CA3AF),
+        fontSize: 14 * escala.clamp(1, 1.6),
+      ),
+      filled:     true,
+      fillColor:  _fondo,
+      suffixIcon: suffix,
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(6 * escala.clamp(1, 1.5)),
+        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(6 * escala.clamp(1, 1.5)),
+        borderSide: const BorderSide(color: _verde, width: 2),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(6 * escala.clamp(1, 1.5)),
+        borderSide: const BorderSide(color: Colors.red),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(6 * escala.clamp(1, 1.5)),
+        borderSide: const BorderSide(color: Colors.red, width: 2),
+      ),
+      contentPadding: EdgeInsets.symmetric(
+        horizontal: 16 * escala.clamp(1, 1.5),
+        vertical:   14 * escala.clamp(1, 1.5),
+      ),
     );
   }
 }

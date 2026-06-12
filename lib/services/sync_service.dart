@@ -6,7 +6,7 @@ import '../db/database_helper.dart';
 class SyncService {
   static const String _urlServidor =
       'http://192.168.5.192/msicdi/soporte/apiReporte';
-  static const String _token = 'TOKEN_SECRETO_TABLETA_2024';
+  static const String _token = 'B1n4r10';
 
   final DatabaseHelper _db = DatabaseHelper();
 
