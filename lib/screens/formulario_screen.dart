@@ -5,9 +5,11 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/reporte.dart';
 import '../models/trabajador.dart';
+import '../models/personal.dart';
 import '../db/database_helper.dart';
 import '../services/sync_service.dart';
 import '../services/directorio_service.dart';
+import '../services/personal_service.dart';
 
 class FormularioScreen extends StatefulWidget {
   final String matricula;
@@ -28,19 +30,26 @@ class _FormularioScreenState extends State<FormularioScreen> {
   final _db         = DatabaseHelper();
   final _sync       = SyncService();
   final _dirService = DirectorioService();
+  final _perService = PersonalService();
 
   bool _enviando  = false;
   bool _buscando  = false;
+
+  // ── Directorio (búsqueda por correo/nombre) ────────────────────────────────
   Trabajador? _trabajadorSeleccionado;
   List<Trabajador> _sugerencias = [];
   Timer? _debounce;
+
+  // ── Personal (autorellenado por matrícula) ─────────────────────────────────
+  Personal? _personalEncontrado;
+  bool _buscandoMatricula = false;
+  Timer? _debounceMatricula;
 
   // ── Checkboxes ──────────────────────────────────────────────────────────────
   bool _sinMatricula = false;
   bool _sinCorreo    = false;
 
   // ── Adjuntos ────────────────────────────────────────────────────────────────
-  // Guardamos File? para preview; las rutas se mandan al modelo al guardar.
   final List<File?> _adjuntos = [null, null, null];
 
   // ── Controladores ──────────────────────────────────────────────────────────
@@ -54,8 +63,10 @@ class _FormularioScreenState extends State<FormularioScreen> {
   final _deptoCtrl      = TextEditingController();
   final _fallaCtrl      = TextEditingController();
   final _busquedaCtrl   = TextEditingController();
+  final _nombreCtrl     = TextEditingController(); // nombre manual si no hay match
 
   String _estadoDirectorio = '';
+  String _estadoPersonal   = '';
 
   static const _verde = Color(0xFF1a6e2e);
   static const _azul  = Color(0xFF1565c0);
@@ -65,21 +76,26 @@ class _FormularioScreenState extends State<FormularioScreen> {
   void initState() {
     super.initState();
     _cargarEstadoDirectorio();
+    _cargarEstadoPersonal();
     _sincronizarDirectorio();
+    _sincronizarPersonal();
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _debounceMatricula?.cancel();
     for (final c in [
       _matriculaCtrl, _nserieCtrl, _correoCtrl, _telefonoCtrl,
       _usuarioCtrl, _contrasenaCtrl, _ipEquipoCtrl, _deptoCtrl,
-      _fallaCtrl, _busquedaCtrl,
+      _fallaCtrl, _busquedaCtrl, _nombreCtrl,
     ]) {
       c.dispose();
     }
     super.dispose();
   }
+
+  // ─── Estado directorio / personal ─────────────────────────────────────────
 
   Future<void> _cargarEstadoDirectorio() async {
     final total  = await _dirService.totalLocal();
@@ -93,10 +109,19 @@ class _FormularioScreenState extends State<FormularioScreen> {
             : diff.inHours < 24
                 ? 'hace ${diff.inHours}h'
                 : 'hace ${diff.inDays}d';
-        _estadoDirectorio = '$total trabajadores · $label';
+        _estadoDirectorio = '$total contactos · $label';
       } else {
-        _estadoDirectorio = total > 0 ? '$total trabajadores' : 'Sin directorio local';
+        _estadoDirectorio =
+            total > 0 ? '$total contactos' : 'Sin directorio local';
       }
+    });
+  }
+
+  Future<void> _cargarEstadoPersonal() async {
+    final total = await _perService.totalLocal();
+    if (!mounted) return;
+    setState(() {
+      _estadoPersonal = total > 0 ? '$total empleados en BD local' : '';
     });
   }
 
@@ -104,6 +129,86 @@ class _FormularioScreenState extends State<FormularioScreen> {
     final result = await _dirService.sincronizar();
     if (result.ok && result.descargados > 0) await _cargarEstadoDirectorio();
   }
+
+  Future<void> _sincronizarPersonal() async {
+    final result = await _perService.sincronizar();
+    if (result.ok && result.descargados > 0) await _cargarEstadoPersonal();
+  }
+
+  // ─── Búsqueda por matrícula (personal) ────────────────────────────────────
+
+  void _onMatriculaChanged(String texto) {
+    // Limpiamos match anterior si el usuario borra
+    if (_personalEncontrado != null) {
+      setState(() => _personalEncontrado = null);
+    }
+
+    if (_sinMatricula) return;
+
+    _debounceMatricula?.cancel();
+
+    // Solo buscar cuando la matrícula tenga al menos 6 dígitos
+    if (texto.trim().length < 6) return;
+
+    _debounceMatricula = Timer(const Duration(milliseconds: 500), () async {
+      setState(() => _buscandoMatricula = true);
+
+      final personal = await _perService.buscarPorMatricula(texto.trim());
+
+      if (!mounted) return;
+      setState(() => _buscandoMatricula = false);
+
+      if (personal != null) {
+        _aplicarDatosPersonal(personal);
+      } else {
+        // Sin match: limpiar campos autorellenados (excepto la matrícula)
+        _limpiarAutorelleno();
+      }
+    });
+  }
+
+  void _aplicarDatosPersonal(Personal p) {
+    setState(() => _personalEncontrado = p);
+
+    // Nombre completo → campo manual de nombre
+    _nombreCtrl.text = p.nombreCompleto;
+
+    // Si el join con directorio trajo datos extra, rellenarlos también
+    if (p.correo != null && p.correo!.isNotEmpty) {
+      _correoCtrl.text = p.correo!;
+      setState(() => _sinCorreo = false);
+    } else {
+      // Sin correo en directorio → activar checkbox automáticamente
+      setState(() => _sinCorreo = true);
+      _correoCtrl.clear();
+    }
+
+    if (p.telefono != null && p.telefono!.isNotEmpty) {
+      _telefonoCtrl.text = p.telefono!;
+    } else if (p.extension != null && p.extension!.isNotEmpty) {
+      _telefonoCtrl.text = p.extension!;
+    }
+
+    if (p.departamento != null && p.departamento!.isNotEmpty) {
+      _deptoCtrl.text = p.departamento!;
+    } else if (p.adscripcion != null && p.adscripcion!.isNotEmpty) {
+      _deptoCtrl.text = p.adscripcion!;
+    }
+
+    // Limpiar búsqueda de directorio si ya tenemos datos de personal
+    if (_trabajadorSeleccionado != null) _limpiarTrabajador();
+  }
+
+  void _limpiarAutorelleno() {
+    setState(() => _personalEncontrado = null);
+    _nombreCtrl.clear();
+    _correoCtrl.clear();
+    _telefonoCtrl.clear();
+    _deptoCtrl.clear();
+    setState(() => _sinCorreo = false);
+  }
+
+  // ─── Búsqueda directorio (por correo/nombre) ──────────────────────────────
 
   void _onBusquedaChanged(String texto) {
     _debounce?.cancel();
@@ -135,11 +240,16 @@ class _FormularioScreenState extends State<FormularioScreen> {
       _trabajadorSeleccionado = null;
       _sugerencias            = [];
       _busquedaCtrl.clear();
+    });
+    // Solo limpiar correo/tel/depto si no vienen de personal
+    if (_personalEncontrado == null) {
       _correoCtrl.clear();
       _telefonoCtrl.clear();
       _deptoCtrl.clear();
-    });
+    }
   }
+
+  // ─── Fotos ────────────────────────────────────────────────────────────────
 
   Future<void> _tomarFoto(int index) async {
     final picker = ImagePicker();
@@ -152,30 +262,40 @@ class _FormularioScreenState extends State<FormularioScreen> {
     }
   }
 
+  // ─── Guardar y enviar ─────────────────────────────────────────────────────
+
   Future<void> _guardarYEnviar() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _enviando = true);
 
-    // Recopila rutas de las fotos capturadas (no nulas)
     final rutasAdjuntos = _adjuntos
         .where((f) => f != null)
         .map((f) => f!.path)
         .toList();
 
+    // Nombre: si encontramos en personal usamos ese; si no, el campo manual
+    final nombreReportador = _personalEncontrado != null
+        ? _personalEncontrado!.nombreCompleto
+        : _nombreCtrl.text.trim();
+
     final reporte = Reporte(
-      matricula:        _sinMatricula ? 'SIN_MATRICULA' : _matriculaCtrl.text.trim(),
+      matricula: _sinMatricula ? 'SIN_MATRICULA' : _matriculaCtrl.text.trim(),
       nombreReportador: widget.nombreTecnico,
-      nserie:           _nserieCtrl.text.trim(),
-      falla:            _fallaCtrl.text.trim(),
-      telefono:  _telefonoCtrl.text.trim().isEmpty ? 'S/N' : _telefonoCtrl.text.trim(),
-      correo:    _sinCorreo
+      nserie:    _nserieCtrl.text.trim(),
+      falla:     _fallaCtrl.text.trim(),
+      telefono:  _telefonoCtrl.text.trim().isEmpty
+          ? 'S/N'
+          : _telefonoCtrl.text.trim(),
+      correo: _sinCorreo
           ? 'sin@correo'
-          : (_correoCtrl.text.trim().isEmpty ? 'sin@correo' : _correoCtrl.text.trim()),
-      usuario:          _usuarioCtrl.text.trim(),
-      contrasena:       _contrasenaCtrl.text.trim(),
-      ipEquipo:         _ipEquipoCtrl.text.trim(),
-      depto:            _deptoCtrl.text.trim(),
-      adjuntos:         rutasAdjuntos,   // ← se guardan localmente en SQLite
+          : (_correoCtrl.text.trim().isEmpty
+              ? 'sin@correo'
+              : _correoCtrl.text.trim()),
+      usuario:   _usuarioCtrl.text.trim(),
+      contrasena: _contrasenaCtrl.text.trim(),
+      ipEquipo:  _ipEquipoCtrl.text.trim(),
+      depto:     _deptoCtrl.text.trim(),
+      adjuntos:  rutasAdjuntos,
     );
 
     await _db.insertarReporte(reporte);
@@ -221,7 +341,10 @@ class _FormularioScreenState extends State<FormularioScreen> {
         content: Text(mensaje, textAlign: TextAlign.center),
         actions: [
           TextButton(
-            onPressed: () { Navigator.of(context).pop(); _limpiarFormulario(); },
+            onPressed: () {
+              Navigator.of(context).pop();
+              _limpiarFormulario();
+            },
             child: const Text('Aceptar'),
           ),
         ],
@@ -232,20 +355,22 @@ class _FormularioScreenState extends State<FormularioScreen> {
   void _limpiarFormulario() {
     _formKey.currentState?.reset();
     _limpiarTrabajador();
+    setState(() {
+      _personalEncontrado = null;
+      _sinMatricula       = false;
+      _sinCorreo          = false;
+      for (int i = 0; i < _adjuntos.length; i++) _adjuntos[i] = null;
+    });
     for (final c in [
       _matriculaCtrl, _nserieCtrl, _correoCtrl, _telefonoCtrl,
-      _usuarioCtrl, _contrasenaCtrl, _ipEquipoCtrl, _deptoCtrl, _fallaCtrl,
+      _usuarioCtrl, _contrasenaCtrl, _ipEquipoCtrl, _deptoCtrl,
+      _fallaCtrl, _nombreCtrl,
     ]) {
       c.clear();
     }
-    setState(() {
-      _sinMatricula = false;
-      _sinCorreo    = false;
-      for (int i = 0; i < _adjuntos.length; i++) _adjuntos[i] = null;
-    });
   }
 
-  // ─── BUILD ──────────────────────────────────────────────────────────────────
+  // ─── BUILD ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -258,9 +383,11 @@ class _FormularioScreenState extends State<FormularioScreen> {
         titleSpacing: 16,
         title: const Text(
           'Reporte de Incidencia',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+          style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87),
         ),
-        // Info del directorio en el subtítulo del AppBar
         bottom: _estadoDirectorio.isEmpty
             ? null
             : PreferredSize(
@@ -271,7 +398,8 @@ class _FormularioScreenState extends State<FormularioScreen> {
                     alignment: Alignment.centerLeft,
                     child: Text(
                       _estadoDirectorio,
-                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                      style:
+                          TextStyle(fontSize: 11, color: Colors.grey[500]),
                     ),
                   ),
                 ),
@@ -285,13 +413,29 @@ class _FormularioScreenState extends State<FormularioScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
 
-              // 1. Matrícula
+              // ── 1. Matrícula con autorellenado ──────────────────────────
               _seccion('Número de matrícula:'),
-              _campoTexto(
-                controller: _matriculaCtrl,
-                hint:       'Introduzca su matrícula.',
-                enabled:    !_sinMatricula,
-                validator:  _sinMatricula
+              TextFormField(
+                controller:   _matriculaCtrl,
+                keyboardType: TextInputType.number,
+                enabled:      !_sinMatricula,
+                onChanged:    _onMatriculaChanged,
+                decoration: _inputDeco('Introduce tu matrícula').copyWith(
+                  suffixIcon: _buscandoMatricula
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : _personalEncontrado != null
+                          ? const Icon(Icons.check_circle,
+                              color: Color(0xFF1a6e2e), size: 20)
+                          : null,
+                ),
+                validator: _sinMatricula
                     ? null
                     : (v) => (v == null || v.trim().isEmpty)
                         ? 'Ingresa tu matrícula o marca la casilla'
@@ -300,30 +444,51 @@ class _FormularioScreenState extends State<FormularioScreen> {
               _checkRojo(
                 value:     _sinMatricula,
                 label:     'No cuento con matrícula',
-                onChanged: (v) => setState(() {
-                  _sinMatricula = v ?? false;
-                  if (_sinMatricula) _matriculaCtrl.clear();
-                }),
+                onChanged: (v) {
+                  setState(() {
+                    _sinMatricula = v ?? false;
+                    if (_sinMatricula) {
+                      _matriculaCtrl.clear();
+                      _limpiarAutorelleno();
+                    }
+                  });
+                },
+              ),
+
+              // ── Tarjeta de personal encontrado ──────────────────────────
+              if (_personalEncontrado != null) ...[
+                const SizedBox(height: 8),
+                _tarjetaPersonal(_personalEncontrado!),
+              ],
+              const SizedBox(height: 16),
+
+              // ── 2. Nombre (se rellena solo o manual) ────────────────────
+              _seccion('Nombre completo del usuario:'),
+              _campoTexto(
+                controller: _nombreCtrl,
+                hint:       'Nombre completo del usuario que reporta',
+                requerido:  true,
+                enabled:    _personalEncontrado == null,
               ),
               const SizedBox(height: 16),
 
-              // 2. Número de serie
+              // ── 3. Número de serie ──────────────────────────────────────
               _seccion('Número de Serie del equipo'),
               _campoTexto(
                 controller: _nserieCtrl,
-                hint:       'Introduzca el número de serie del equipo a reportar',
+                hint:       'Número de serie del equipo a reportar',
                 requerido:  true,
               ),
               const SizedBox(height: 16),
 
-              // 3. Correo / búsqueda directorio
+              // ── 4. Correo / búsqueda directorio ────────────────────────
               _seccion('Correo Electrónico:', labelColor: _verde),
               _campoBusqueda(),
               if (_trabajadorSeleccionado != null) _tarjetaTrabajador(),
               if (_trabajadorSeleccionado == null)
                 _campoTexto(
                   controller: _correoCtrl,
-                  hint:       'Escriba su correo electrónico institucional',
+                  hint:       'Correo electrónico institucional',
                   teclado:    TextInputType.emailAddress,
                   enabled:    !_sinCorreo,
                 ),
@@ -332,21 +497,24 @@ class _FormularioScreenState extends State<FormularioScreen> {
                 label:     'Sin correo institucional',
                 onChanged: (v) => setState(() {
                   _sinCorreo = v ?? false;
-                  if (_sinCorreo) { _correoCtrl.clear(); _limpiarTrabajador(); }
+                  if (_sinCorreo) {
+                    _correoCtrl.clear();
+                    _limpiarTrabajador();
+                  }
                 }),
               ),
               const SizedBox(height: 16),
 
-              // 4. Teléfono
+              // ── 5. Teléfono ─────────────────────────────────────────────
               _seccion('Teléfono:'),
               _campoTexto(
                 controller: _telefonoCtrl,
-                hint:       'Escriba un teléfono local para contacto',
+                hint:       'Teléfono local para contacto',
                 teclado:    TextInputType.phone,
               ),
               const SizedBox(height: 16),
 
-              // 5. Cuenta de usuario
+              // ── 6. Cuenta de usuario ────────────────────────────────────
               _seccion('Cuenta de usuario del equipo', labelColor: _verde),
               _campoTexto(
                 controller: _usuarioCtrl,
@@ -355,17 +523,17 @@ class _FormularioScreenState extends State<FormularioScreen> {
               ),
               const SizedBox(height: 16),
 
-              // 6. Contraseña
+              // ── 7. Contraseña ───────────────────────────────────────────
               _seccion('Contraseña de usuario', labelColor: _verde),
               _campoTexto(
-                controller:  _contrasenaCtrl,
-                hint:        'Contraseña CORRECTA que se escribe al encender el equipo',
+                controller:   _contrasenaCtrl,
+                hint:         'Contraseña CORRECTA al encender el equipo',
                 esContrasena: true,
-                requerido:   true,
+                requerido:    true,
               ),
               const SizedBox(height: 16),
 
-              // 7. IP
+              // ── 8. IP ───────────────────────────────────────────────────
               _seccion('IP del Equipo', labelColor: _verde),
               _campoTexto(
                 controller: _ipEquipoCtrl,
@@ -375,31 +543,33 @@ class _FormularioScreenState extends State<FormularioScreen> {
               ),
               const SizedBox(height: 16),
 
-              // 8. Departamento
+              // ── 9. Departamento ─────────────────────────────────────────
               _seccion('Departamento al que pertenece', labelColor: _verde),
               _campoTexto(
                 controller: _deptoCtrl,
-                hint:       'Área donde se encuentra físicamente el equipo',
+                hint:       'Área donde se encuentra el equipo',
                 requerido:  true,
               ),
               const SizedBox(height: 8),
 
               const Divider(height: 32, color: Color(0xFFE5E7EB)),
 
-              // 9. Descripción
+              // ── 10. Descripción ─────────────────────────────────────────
               _seccion('Descripción del servicio:'),
               TextFormField(
                 controller: _fallaCtrl,
                 maxLines:   5,
                 decoration: _inputDeco(
-                  'Describa detalladamente la incidencia y datos adicionales',
+                  'Describa detalladamente la incidencia',
                 ),
                 validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'La descripción es requerida' : null,
+                    (v == null || v.trim().isEmpty)
+                        ? 'La descripción es requerida'
+                        : null,
               ),
               const SizedBox(height: 20),
 
-              // 10. Adjuntos
+              // ── 11. Adjuntos ────────────────────────────────────────────
               Text(
                 'Archivos adjuntos (fotos del equipo):',
                 style: TextStyle(
@@ -415,7 +585,7 @@ class _FormularioScreenState extends State<FormularioScreen> {
               ],
               const SizedBox(height: 24),
 
-              // Botón enviar
+              // ── Botón enviar ────────────────────────────────────────────
               SizedBox(
                 width:  double.infinity,
                 height: 50,
@@ -436,13 +606,14 @@ class _FormularioScreenState extends State<FormularioScreen> {
                       : const Icon(Icons.send),
                   label: Text(
                     _enviando ? 'Guardando...' : 'Enviar Reporte.',
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
               const SizedBox(height: 10),
 
-              // Botón limpiar
+              // ── Botón limpiar ───────────────────────────────────────────
               SizedBox(
                 width:  double.infinity,
                 height: 46,
@@ -454,14 +625,15 @@ class _FormularioScreenState extends State<FormularioScreen> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                   ),
-                  icon:  const Icon(Icons.cleaning_services_outlined, size: 18),
+                  icon:  const Icon(Icons.cleaning_services_outlined,
+                      size: 18),
                   label: const Text('Limpiar Formulario',
                       style: TextStyle(fontWeight: FontWeight.w600)),
                 ),
               ),
               const SizedBox(height: 16),
 
-              // Nota legal
+              // ── Nota legal ──────────────────────────────────────────────
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -476,9 +648,10 @@ class _FormularioScreenState extends State<FormularioScreen> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'NOTA: Todos los reportes son controlados mediante la dirección IP '
-                        'de origen, por lo que cualquier reporte inválido repercutirá en '
-                        'próximos reportes y serán candidatos a las sanciones establecidas '
+                        'NOTA: Todos los reportes son controlados mediante '
+                        'la dirección IP de origen, por lo que cualquier '
+                        'reporte inválido repercutirá en próximos reportes '
+                        'y serán candidatos a las sanciones establecidas '
                         'por la coordinación de informática.',
                         style: TextStyle(
                           fontSize: 10,
@@ -498,13 +671,17 @@ class _FormularioScreenState extends State<FormularioScreen> {
     );
   }
 
-  // ─── Helpers de UI ──────────────────────────────────────────────────────────
+  // ─── Widgets de UI ────────────────────────────────────────────────────────
 
-  Widget _seccion(String titulo, {Color labelColor = const Color(0xFF374151)}) =>
+  Widget _seccion(String titulo,
+          {Color labelColor = const Color(0xFF374151)}) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Text(titulo,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: labelColor)),
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: labelColor)),
       );
 
   Widget _campoTexto({
@@ -524,16 +701,20 @@ class _FormularioScreenState extends State<FormularioScreen> {
         decoration:   _inputDeco(hint),
         validator: validator ??
             (requerido
-                ? (v) => (v == null || v.trim().isEmpty) ? 'Este campo es requerido' : null
+                ? (v) => (v == null || v.trim().isEmpty)
+                    ? 'Este campo es requerido'
+                    : null
                 : null),
       );
 
   InputDecoration _inputDeco(String hint) => InputDecoration(
         hintText:  hint,
-        hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF9CA3AF)),
+        hintStyle: const TextStyle(
+            fontSize: 13, color: Color(0xFF9CA3AF)),
         filled:    true,
         fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
             borderSide: const BorderSide(color: Color(0xFFD1D5DB))),
@@ -542,13 +723,16 @@ class _FormularioScreenState extends State<FormularioScreen> {
             borderSide: const BorderSide(color: Color(0xFFD1D5DB))),
         focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFF1a6e2e), width: 2)),
+            borderSide:
+                const BorderSide(color: Color(0xFF1a6e2e), width: 2)),
         errorBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFFd32f2f))),
+            borderSide:
+                const BorderSide(color: Color(0xFFd32f2f))),
         disabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+            borderSide:
+                const BorderSide(color: Color(0xFFE5E7EB))),
       );
 
   Widget _checkRojo({
@@ -567,13 +751,16 @@ class _FormularioScreenState extends State<FormularioScreen> {
                 onChanged:   onChanged,
                 activeColor: _rojo,
                 side: BorderSide(color: Colors.grey.shade400),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(3)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(3)),
               ),
             ),
             const SizedBox(width: 8),
             Text(label,
                 style: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.bold, color: _rojo)),
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: _rojo)),
           ],
         ),
       );
@@ -586,9 +773,10 @@ class _FormularioScreenState extends State<FormularioScreen> {
             onChanged:  _onBusquedaChanged,
             enabled:    !_sinCorreo,
             decoration: _inputDeco(
-              'Buscar por correo o nombre  (ej. juan.perez@imss.gob.mx)',
+              'Buscar por correo o nombre (ej. juan.perez@imss.gob.mx)',
             ).copyWith(
-              prefixIcon: const Icon(Icons.search, color: Color(0xFF1a6e2e), size: 20),
+              prefixIcon: const Icon(Icons.search,
+                  color: Color(0xFF1a6e2e), size: 20),
               suffixIcon: _busquedaCtrl.text.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear, size: 18),
@@ -597,8 +785,10 @@ class _FormularioScreenState extends State<FormularioScreen> {
                       ? const Padding(
                           padding: EdgeInsets.all(12),
                           child: SizedBox(
-                              width: 16, height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2)))
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2)))
                       : null,
             ),
           ),
@@ -639,10 +829,11 @@ class _FormularioScreenState extends State<FormularioScreen> {
                             fontWeight: FontWeight.bold),
                       ),
                     ),
-                    title:    Text(t.nombreCompleto,
+                    title: Text(t.nombreCompleto,
                         style: const TextStyle(fontSize: 13)),
                     subtitle: Text(t.correo ?? t.matricula,
-                        style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+                        style: TextStyle(
+                            fontSize: 11, color: Colors.grey[600])),
                     trailing: t.departamento != null
                         ? Text(t.departamento!,
                             style: TextStyle(
@@ -659,6 +850,7 @@ class _FormularioScreenState extends State<FormularioScreen> {
         ],
       );
 
+  /// Tarjeta verde cuando se encontró al trabajador en directorio_local
   Widget _tarjetaTrabajador() {
     final t = _trabajadorSeleccionado!;
     return Container(
@@ -674,16 +866,19 @@ class _FormularioScreenState extends State<FormularioScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.check_circle, color: Color(0xFF1a6e2e), size: 18),
+              const Icon(Icons.check_circle,
+                  color: Color(0xFF1a6e2e), size: 18),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(t.nombreCompleto,
                     style: const TextStyle(
-                        fontWeight: FontWeight.bold, color: Color(0xFF1a6e2e))),
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1a6e2e))),
               ),
               GestureDetector(
                 onTap:  _limpiarTrabajador,
-                child: const Icon(Icons.close, size: 18, color: Color(0xFF1a6e2e)),
+                child: const Icon(Icons.close,
+                    size: 18, color: Color(0xFF1a6e2e)),
               ),
             ],
           ),
@@ -702,11 +897,60 @@ class _FormularioScreenState extends State<FormularioScreen> {
     );
   }
 
+  /// Tarjeta azul cuando se encontró al empleado en personal_local
+  Widget _tarjetaPersonal(Personal p) {
+    final tieneDirectorio = p.correo != null && p.correo!.isNotEmpty;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color:        const Color(0xFFE3F2FD),
+        borderRadius: BorderRadius.circular(8),
+        border:       Border.all(color: const Color(0xFF90CAF9)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.person_search,
+                  color: Color(0xFF1565c0), size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  p.nombreCompleto,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1565c0)),
+                ),
+              ),
+              GestureDetector(
+                onTap: _limpiarAutorelleno,
+                child: const Icon(Icons.close,
+                    size: 18, color: Color(0xFF1565c0)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            tieneDirectorio
+                ? 'Datos completados desde directorio'
+                : 'Empleado encontrado · sin correo en directorio',
+            style: TextStyle(
+                fontSize: 11,
+                color: tieneDirectorio
+                    ? Colors.blue[700]
+                    : Colors.orange[700]),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _filaAdjunto(int index) {
     final archivo = _adjuntos[index];
     return Row(
       children: [
-        // Preview de miniatura si hay foto capturada
         if (archivo != null)
           Container(
             width: 42, height: 42,
@@ -730,13 +974,17 @@ class _FormularioScreenState extends State<FormularioScreen> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                archivo != null ? 'Foto ${index + 1} capturada ✓' : 'Sin foto',
+                archivo != null
+                    ? 'Foto ${index + 1} capturada ✓'
+                    : 'Sin foto',
                 style: TextStyle(
                   fontSize: 12,
-                  color: archivo != null ? Colors.black87 : const Color(0xFF9CA3AF),
+                  color: archivo != null
+                      ? Colors.black87
+                      : const Color(0xFF9CA3AF),
                 ),
-                maxLines:  1,
-                overflow:  TextOverflow.ellipsis,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ),
