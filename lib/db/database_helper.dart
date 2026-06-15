@@ -20,7 +20,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'reportes_msicdi.db');
     return await openDatabase(
       path,
-      version: 2,                          // ← subir versión
+      version: 3,                          // v2 → v3: agrega columna adjuntos
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -33,7 +33,12 @@ class DatabaseHelper {
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      await db.execute(_sqlDirectorio);    // migración: agrega tabla
+      await db.execute(_sqlDirectorio);
+    }
+    if (oldVersion < 3) {
+      // Agrega columna para guardar rutas de fotos (JSON: lista de strings)
+      await db.execute(
+          'ALTER TABLE reportes ADD COLUMN adjuntos TEXT DEFAULT NULL');
     }
   }
 
@@ -55,7 +60,8 @@ class DatabaseHelper {
       ipOrigen        TEXT,
       estado          TEXT DEFAULT 'pendiente',
       nRastreo        TEXT,
-      fechaCreacion   TEXT
+      fechaCreacion   TEXT,
+      adjuntos        TEXT DEFAULT NULL
     )
   ''';
 
@@ -126,12 +132,10 @@ class DatabaseHelper {
 
   Future<int> ultimoTsSync() async {
     final db = await database;
-    final r = await db.rawQuery(
-        'SELECT MAX(ts_sync) as m FROM directorio_local');
+    final r = await db.rawQuery('SELECT MAX(ts_sync) as m FROM directorio_local');
     return Sqflite.firstIntValue(r) ?? 0;
   }
 
-  // Búsqueda por correo exacto
   Future<Trabajador?> buscarPorCorreo(String correo) async {
     final db = await database;
     final maps = await db.query('directorio_local',
@@ -141,7 +145,6 @@ class DatabaseHelper {
     return maps.isEmpty ? null : Trabajador.fromMap(maps.first);
   }
 
-  // Búsqueda por matrícula exacta
   Future<Trabajador?> buscarPorMatricula(String matricula) async {
     final db = await database;
     final maps = await db.query('directorio_local',
@@ -151,7 +154,6 @@ class DatabaseHelper {
     return maps.isEmpty ? null : Trabajador.fromMap(maps.first);
   }
 
-  // Búsqueda por texto (correo o nombre, para autocompletado)
   Future<List<Trabajador>> buscarPorTexto(String texto, {int limit = 6}) async {
     final db = await database;
     final q = '%${texto.toLowerCase()}%';
