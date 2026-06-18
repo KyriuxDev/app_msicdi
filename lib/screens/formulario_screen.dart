@@ -262,10 +262,12 @@ class _FormularioScreenState extends State<FormularioScreen> {
     }
   }
 
-  // ─── Guardar y enviar ─────────────────────────────────────────────────────
+  // ─── Guardar y enviar ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
   Future<void> _guardarYEnviar() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // 1. Guardar en SQLite — esto es instantáneo, sin red
     setState(() => _enviando = true);
 
     final rutasAdjuntos = _adjuntos
@@ -273,7 +275,6 @@ class _FormularioScreenState extends State<FormularioScreen> {
         .map((f) => f!.path)
         .toList();
 
-    // Nombre: si encontramos en personal usamos ese; si no, el campo manual
     final nombreReportador = _personalEncontrado != null
         ? _personalEncontrado!.nombreCompleto
         : _nombreCtrl.text.trim();
@@ -291,40 +292,30 @@ class _FormularioScreenState extends State<FormularioScreen> {
           : (_correoCtrl.text.trim().isEmpty
               ? 'sin@correo'
               : _correoCtrl.text.trim()),
-      usuario:   _usuarioCtrl.text.trim(),
+      usuario:    _usuarioCtrl.text.trim(),
       contrasena: _contrasenaCtrl.text.trim(),
-      ipEquipo:  _ipEquipoCtrl.text.trim(),
-      depto:     _deptoCtrl.text.trim(),
-      adjuntos:  rutasAdjuntos,
+      ipEquipo:   _ipEquipoCtrl.text.trim(),
+      depto:      _deptoCtrl.text.trim(),
+      adjuntos:   rutasAdjuntos,
     );
 
     await _db.insertarReporte(reporte);
-    final resultado = await _sync.sincronizar();
+
+    // 2. Lanzar sync en background SIN await — la UI no espera la red
+    _sync.enviarEnBackground();
+
+    // 3. Respuesta inmediata al usuario
     setState(() => _enviando = false);
     if (!mounted) return;
 
-    if (resultado.containsKey('sinConexion')) {
-      _mostrarMensaje(
-        icono:   Icons.wifi_off,
-        color:   Colors.orange,
-        titulo:  'Guardado sin conexión',
-        mensaje: 'El reporte se enviará automáticamente cuando haya señal.',
-      );
-    } else if (resultado['enviados']! > 0) {
-      _mostrarMensaje(
-        icono:   Icons.check_circle,
-        color:   Colors.green,
-        titulo:  '¡Reporte enviado!',
-        mensaje: 'El reporte llegó al servidor correctamente.',
-      );
-    } else {
-      _mostrarMensaje(
-        icono:   Icons.cloud_queue,
-        color:   Colors.orange,
-        titulo:  'Guardado localmente',
-        mensaje: 'Se enviará al servidor en cuanto haya conexión.',
-      );
-    }
+    _mostrarMensaje(
+      icono:   Icons.check_circle_outline,
+      color:   Colors.green,
+      titulo:  'Reporte guardado',
+      mensaje: 'Se guardó correctamente.\n'
+               'Si tienes conexión se enviará en segundos; '
+               'si no, se enviará en cuanto recuperes señal.',
+    );
   }
 
   void _mostrarMensaje({
@@ -691,7 +682,6 @@ class _FormularioScreenState extends State<FormularioScreen> {
     bool esContrasena = false,
     bool enabled      = true,
     TextInputType teclado = TextInputType.text,
-    String? Function(String?)? validator,
   }) =>
       TextFormField(
         controller:   controller,
@@ -699,12 +689,6 @@ class _FormularioScreenState extends State<FormularioScreen> {
         keyboardType: teclado,
         enabled:      enabled,
         decoration:   _inputDeco(hint),
-        validator: validator ??
-            (requerido
-                ? (v) => (v == null || v.trim().isEmpty)
-                    ? 'Este campo es requerido'
-                    : null
-                : null),
       );
 
   InputDecoration _inputDeco(String hint) => InputDecoration(

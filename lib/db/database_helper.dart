@@ -226,4 +226,16 @@ class DatabaseHelper {
     );
     return maps.isEmpty ? null : Personal.fromMap(maps.first);
   }
+  
+  /// Marca un reporte con error permanente de datos (ej: validación del servidor).
+  /// El estado 'error_datos' no se reintenta en syncs automáticos.
+  Future<void> marcarErrorPermanente(int id) async {
+    final db = await database;
+    await db.update(
+      'reportes',
+      {'estado': 'error_datos'},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
 }
