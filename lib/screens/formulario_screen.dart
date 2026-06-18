@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/reporte.dart';
 import '../models/trabajador.dart';
@@ -10,6 +9,7 @@ import '../db/database_helper.dart';
 import '../services/sync_service.dart';
 import '../services/directorio_service.dart';
 import '../services/personal_service.dart';
+import '../screens/qr_scanner_screen.dart';
 
 class FormularioScreen extends StatefulWidget {
   final String matricula;
@@ -93,6 +93,54 @@ class _FormularioScreenState extends State<FormularioScreen> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  // SCAN QR
+  Future<void> _escanearQR() async {
+    final datos = await Navigator.push<Map<String, String>>(
+      context,
+      MaterialPageRoute(builder: (_) => const QrScannerScreen()),
+    );
+
+    if (datos == null || !mounted) return;
+
+    // N° de serie
+    final sn = datos['SN'] ?? '';
+    if (sn.isNotEmpty) _nserieCtrl.text = sn;
+
+    // IP del equipo
+    final ip = datos['IP'] ?? '';
+    if (ip.isNotEmpty) _ipEquipoCtrl.text = ip;
+
+    // Usuario de Windows (HOST como referencia de equipo)
+    final host = datos['HOST'] ?? '';
+    if (host.isNotEmpty && _usuarioCtrl.text.isEmpty) {
+      _usuarioCtrl.text = host.toLowerCase();
+    }
+
+    // Usuario Windows del equipo
+    final user = datos['USER'] ?? '';
+    if (user.isNotEmpty) _usuarioCtrl.text = user;
+
+    // Modelo → departamento si está vacío
+    final mod = datos['MOD'] ?? '';
+    if (mod.isNotEmpty && _deptoCtrl.text.isEmpty) {
+      // No sobreescribir depto con el modelo; solo mostrar snackbar
+    }
+
+    setState(() {});
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          sn.isNotEmpty
+              ? '✅ QR leído — Serie: $sn'
+              : '✅ QR leído correctamente',
+        ),
+        backgroundColor: const Color(0xFF1a6e2e),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   // ─── Estado directorio / personal ─────────────────────────────────────────
@@ -463,12 +511,46 @@ class _FormularioScreenState extends State<FormularioScreen> {
               ),
               const SizedBox(height: 16),
 
-              // ── 3. Número de serie ──────────────────────────────────────
+              // ── 3. Número de serie ──────────────────────────────────
               _seccion('Número de Serie del equipo'),
-              _campoTexto(
-                controller: _nserieCtrl,
-                hint:       'Número de serie del equipo a reportar',
-                requerido:  true,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _nserieCtrl,
+                      decoration: _inputDeco('Número de serie del equipo'),
+                      validator: (v) =>
+                          (v == null || v.trim().isEmpty)
+                              ? 'Ingresa el número de serie'
+                              : null,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // ── Botón escanear QR ──
+                  SizedBox(
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: _escanearQR,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1565c0),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                        elevation: 0,
+                      ),
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.qr_code_scanner, size: 20),
+                          SizedBox(height: 2),
+                          Text('QR', style: TextStyle(fontSize: 10)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
 

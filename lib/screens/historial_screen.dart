@@ -23,7 +23,7 @@ class _HistorialScreenState extends State<HistorialScreen>
   // ── Paleta (tomada del mockup) ──────────────────────────────────────────
   static const _primary          = Color(0xFF00450D);
   static const _onPrimary        = Color(0xFFFFFFFF);
-  static const _background       = Color(0xFFFBF9F9);
+  static const _background       = Color(0xFFF7F8FA);
   static const _surfaceLowest    = Color(0xFFFFFFFF);
   static const _outlineVariant   = Color(0xFFC0C9BB);
   static const _onSurface        = Color(0xFF1B1C1C);
@@ -115,8 +115,8 @@ class _HistorialScreenState extends State<HistorialScreen>
       backgroundColor: _background,
       appBar: AppBar(
         toolbarHeight: 64,
-        backgroundColor: _primary,
-        foregroundColor: _onPrimary,
+        backgroundColor: _onPrimary,
+        foregroundColor: _onSurface,
         elevation: 0,
         title: const Text(
           'Historial de Reportes',

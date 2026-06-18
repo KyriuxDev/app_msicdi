@@ -66,5 +66,10 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Se necesita la cámara para escanear códigos QR de los equipos</string>
+
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Se necesita acceso a la red local para enviar reportes al servidor IMSS</string>
 </dict>
 </plist>
