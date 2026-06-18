@@ -10,30 +10,69 @@ class HistorialScreen extends StatefulWidget {
   State<HistorialScreen> createState() => _HistorialScreenState();
 }
 
-class _HistorialScreenState extends State<HistorialScreen> {
+class _HistorialScreenState extends State<HistorialScreen>
+    with SingleTickerProviderStateMixin {
   final _db = DatabaseHelper();
   final _sync = SyncService();
+
   List<Reporte> _reportes = [];
   bool _sincronizando = false;
+
+  late final AnimationController _spinCtrl;
+
+  // ── Paleta (tomada del mockup) ──────────────────────────────────────────
+  static const _primary          = Color(0xFF00450D);
+  static const _onPrimary        = Color(0xFFFFFFFF);
+  static const _background       = Color(0xFFFBF9F9);
+  static const _surfaceLowest    = Color(0xFFFFFFFF);
+  static const _outlineVariant   = Color(0xFFC0C9BB);
+  static const _onSurface        = Color(0xFF1B1C1C);
+  static const _onSurfaceVariant = Color(0xFF41493E);
+  static const _naranja          = Color(0xFFF57C00);
+  static const _naranjaBg        = Color(0xFFFFF3E0);
+  static const _verde            = Color(0xFF2E7D32);
+  static const _verdeBg          = Color(0xFFE8F5E9);
+  static const _rojo             = Color(0xFFBA1A1A);
+  static const _rojoBg           = Color(0xFFFFDAD6);
+
+  static const _sombraCard = [
+    BoxShadow(color: Color(0x0D000000), blurRadius: 12, offset: Offset(0, 4)),
+  ];
 
   @override
   void initState() {
     super.initState();
+    _spinCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
     _cargar();
+  }
+
+  @override
+  void dispose() {
+    _spinCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _cargar() async {
     final lista = await _db.obtenerTodos();
+    if (!mounted) return;
     setState(() => _reportes = lista);
   }
 
   Future<void> _sincronizar() async {
+    if (_sincronizando) return;
     setState(() => _sincronizando = true);
+    _spinCtrl.repeat();
+
     final resultado = await _sync.sincronizar();
     await _cargar();
-    setState(() => _sincronizando = false);
 
     if (!mounted) return;
+    _spinCtrl.stop();
+    _spinCtrl.value = 0;
+    setState(() => _sincronizando = false);
 
     final enviados = resultado['enviados'] ?? 0;
     final fallidos = resultado['fallidos'] ?? 0;
@@ -44,16 +83,16 @@ class _HistorialScreenState extends State<HistorialScreen> {
 
     if (sinConexion) {
       mensaje = 'Sin conexión, intenta más tarde';
-      color = Colors.orange;
+      color = _naranja;
     } else if (enviados > 0) {
       mensaje = '$enviados reporte(s) enviado(s) correctamente';
-      color = Colors.green;
+      color = _verde;
     } else if (fallidos > 0) {
       mensaje = 'No se pudo enviar $fallidos reporte(s)';
-      color = Colors.red;
+      color = _rojo;
     } else {
       mensaje = 'No hay reportes pendientes';
-      color = Colors.blue;
+      color = Colors.blueGrey;
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -65,95 +104,97 @@ class _HistorialScreenState extends State<HistorialScreen> {
     );
   }
 
+  // ─── BUILD ────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     final pendientes = _reportes.where((r) => r.estado == 'pendiente').length;
     final enviados = _reportes.where((r) => r.estado == 'enviado').length;
 
     return Scaffold(
+      backgroundColor: _background,
       appBar: AppBar(
-        title: const Text('Historial de Reportes'),
-        backgroundColor: const Color(0xFF1a6e2e),
-        foregroundColor: Colors.white,
+        toolbarHeight: 64,
+        backgroundColor: _primary,
+        foregroundColor: _onPrimary,
+        elevation: 0,
+        title: const Text(
+          'Historial de Reportes',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        ),
         actions: [
-          // Botón sincronizar manual
-          IconButton(
-            onPressed: _sincronizando ? null : _sincronizar,
-            icon: _sincronizando
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.sync),
-            tooltip: 'Sincronizar ahora',
+          RotationTransition(
+            turns: _spinCtrl,
+            child: IconButton(
+              onPressed: _sincronizando ? null : _sincronizar,
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Sincronizar ahora',
+            ),
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Resumen arriba
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: const Color(0xFFe8f5e9),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _tarjetaResumen(
-                    cantidad: pendientes,
-                    label: 'Pendientes',
-                    color: Colors.orange,
-                    icono: Icons.schedule,
-                  ),
+      body: RefreshIndicator(
+        onRefresh: _cargar,
+        color: _primary,
+        child: CustomScrollView(
+          slivers: [
+            // ── Resumen ──────────────────────────────────────────────────
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              sliver: SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _tarjetaResumen(
+                        cantidad: pendientes,
+                        label: 'PENDIENTES',
+                        color: _naranja,
+                        icono: Icons.schedule,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _tarjetaResumen(
+                        cantidad: enviados,
+                        label: 'ENVIADOS',
+                        color: _verde,
+                        icono: Icons.check_circle,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _tarjetaResumen(
-                    cantidad: enviados,
-                    label: 'Enviados',
-                    color: const Color(0xFF1a6e2e),
-                    icono: Icons.check_circle,
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
 
-          // Lista de reportes
-          Expanded(
-            child: _reportes.isEmpty
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.inbox, size: 64, color: Colors.grey),
-                        SizedBox(height: 12),
-                        Text(
-                          'No hay reportes guardados',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ],
+            // ── Lista / estado vacío ─────────────────────────────────────
+            if (_reportes.isEmpty)
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: _estadoVacio(),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _tarjetaReporte(_reportes[index]),
                     ),
-                  )
-                : RefreshIndicator(
-                    onRefresh: _cargar,
-                    child: ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _reportes.length,
-                      itemBuilder: (context, index) {
-                        final r = _reportes[index];
-                        return _tarjetaReporte(r);
-                      },
-                    ),
+                    childCount: _reportes.length,
                   ),
-          ),
-        ],
+                ),
+              ),
+
+            if (_reportes.isNotEmpty)
+              SliverToBoxAdapter(child: _finDeHistorial()),
+          ],
+        ),
       ),
     );
   }
+
+  // ─── Widgets ────────────────────────────────────────────────────────────
 
   Widget _tarjetaResumen({
     required int cantidad,
@@ -162,35 +203,41 @@ class _HistorialScreenState extends State<HistorialScreen> {
     required IconData icono,
   }) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _surfaceLowest,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: _outlineVariant),
+        boxShadow: _sombraCard,
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icono, color: color, size: 28),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              Icon(icono, color: color, size: 22),
+              const SizedBox(width: 8),
               Text(
                 '$cantidad',
                 style: TextStyle(
-                  fontSize: 22,
+                  fontSize: 28,
                   fontWeight: FontWeight.bold,
                   color: color,
-                ),
-              ),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
+                  height: 1.0,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.6,
+              color: _onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -198,79 +245,201 @@ class _HistorialScreenState extends State<HistorialScreen> {
   }
 
   Widget _tarjetaReporte(Reporte r) {
-    final enviado = r.estado == 'enviado';
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 8,
-        ),
-        leading: CircleAvatar(
-          backgroundColor: enviado
-              ? const Color(0xFF1a6e2e)
-              : Colors.orange,
-          child: Icon(
-            enviado ? Icons.cloud_done : Icons.schedule,
-            color: Colors.white,
-            size: 20,
+    final estilo = _estiloEstado(r.estado);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _surfaceLowest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _outlineVariant),
+        boxShadow: _sombraCard,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Avatar de estado
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(color: estilo.bg, shape: BoxShape.circle),
+            child: Icon(estilo.icono, color: estilo.color, size: 26),
           ),
-        ),
-        title: Text(
-          r.nserie.isNotEmpty ? r.nserie : 'Sin número de serie',
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            Text(
-              r.falla,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.grey[600], fontSize: 12),
-            ),
-            const SizedBox(height: 4),
-            Row(
+          const SizedBox(width: 16),
+
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.person, size: 12, color: Colors.grey[500]),
-                const SizedBox(width: 4),
-                Text(
-                  r.nombreReportador,
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                // Título (n° de serie) + fecha
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        (r.nserie.isNotEmpty ? r.nserie : 'SIN N° DE SERIE')
+                            .toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: _onSurface,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _formatoFecha(r.fechaCreacion),
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                        color: _onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-                const Spacer(),
+                const SizedBox(height: 3),
+
+                // Descripción de la falla
                 Text(
-                  r.fechaCreacion.substring(0, 16).replaceAll('T', ' '),
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                  r.falla.toUpperCase(),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14, color: _onSurfaceVariant),
+                ),
+
+                // Separador + reportador (+ folio si fue enviado)
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  padding: const EdgeInsets.only(top: 12),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(color: _outlineVariant.withOpacity(0.4)),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.person, size: 14, color: _onSurfaceVariant),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          r.nombreReportador.toUpperCase(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 0.2,
+                            color: _onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      if (r.estado == 'enviado' && r.nRastreo != null)
+                        Container(
+                          margin: const EdgeInsets.only(left: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: _verdeBg,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'Folio: ${r.nRastreo}',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: _verde,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ],
             ),
-            if (enviado && r.nRastreo != null) ...[
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 2,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFe8f5e9),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  'Folio: ${r.nRastreo}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF1a6e2e),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+
+  _EstiloEstado _estiloEstado(String estado) {
+    switch (estado) {
+      case 'enviado':
+        return const _EstiloEstado(
+          icono: Icons.check_circle,
+          color: _verde,
+          bg: _verdeBg,
+        );
+      case 'error_datos':
+        return const _EstiloEstado(
+          icono: Icons.error,
+          color: _rojo,
+          bg: _rojoBg,
+        );
+      default: // pendiente
+        return const _EstiloEstado(
+          icono: Icons.schedule,
+          color: _naranja,
+          bg: _naranjaBg,
+        );
+    }
+  }
+
+  String _formatoFecha(String iso) {
+    if (iso.length < 16) return iso;
+    return iso.substring(0, 16).replaceAll('T', ' ');
+  }
+
+  Widget _estadoVacio() => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.inbox_outlined,
+                  size: 64, color: _onSurfaceVariant.withOpacity(0.4)),
+              const SizedBox(height: 12),
+              const Text(
+                'No hay reportes guardados',
+                style: TextStyle(color: _onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _finDeHistorial() => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Opacity(
+          opacity: 0.3,
+          child: Column(
+            children: const [
+              Icon(Icons.inventory_2_outlined, size: 48),
+              SizedBox(height: 8),
+              Text(
+                'Fin del historial',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+class _EstiloEstado {
+  final IconData icono;
+  final Color color;
+  final Color bg;
+
+  const _EstiloEstado({
+    required this.icono,
+    required this.color,
+    required this.bg,
+  });
 }
