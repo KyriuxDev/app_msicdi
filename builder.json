@@ -1,0 +1,17 @@
+{
+  "project": "app_msicdi",
+  "platform": "ios",
+  "github": {
+    "owner": "KyriuxDev",
+    "repo": "app_msicdi"
+  },
+  "ios": {
+    "path": "ios"
+  },
+  "flutter": {
+    "version": "3.41.6",
+    "watch": {}
+  },
+  "reactNative": {},
+  "mobai": {}
+}
