@@ -1,0 +1,46 @@
+workflows:
+  ios-release:
+    name: iOS Release (.ipa)
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        APP_BUNDLE_ID: "mx.gob.imss.msicdi"   # ← cambia al bundle id real de tu app
+      ios_signing:
+        distribution_type: ad_hoc              # 'ad_hoc' para instalar en dispositivos registrados
+        bundle_identifier: mx.gob.imss.msicdi  # debe coincidir con APP_BUNDLE_ID
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+
+    scripts:
+      - name: Instalar dependencias Flutter
+        script: flutter pub get
+
+      - name: Instalar pods
+        script: |
+          find . -name "Podfile" -execdir pod install \;
+
+      - name: Compilar .ipa
+        script: |
+          flutter build ipa \
+            --release \
+            --export-options-plist=/Users/builder/export_options.plist
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log      # útil para depurar si algo falla
+
+    publishing:
+      email:
+        recipients:
+          - tu@correo.com               # ← pon tu correo para recibir el .ipa
+        notify:
+          success: true
+          failure: true
