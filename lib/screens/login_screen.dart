@@ -1,8 +1,6 @@
+import 'package:app_msicdi/services/usuario_service.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import '../config/app_config.dart';
+import '../services/sync_service.dart' show unawaited;
 import 'home_screen.dart';
 
 const _verde    = Color(0xFF588b22);
@@ -19,6 +17,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _matriculaCtrl = TextEditingController();
   final _passCtrl      = TextEditingController();
+  final _usuarioService = UsuarioService();
 
   bool    _cargando    = false;
   bool    _verPass     = false;
@@ -36,76 +35,35 @@ class _LoginScreenState extends State<LoginScreen> {
     final matricula  = _matriculaCtrl.text.trim();
     final contrasena = _passCtrl.text;
 
-    // Validación local rápida
     if (matricula.isEmpty) {
-      setState(() { _errorGeneral = 'Ingresa tu matrícula'; _errorPass = null; });
+      setState(() => _errorGeneral = 'Ingresa tu matrícula');
       return;
     }
     if (contrasena.isEmpty) {
-      setState(() { _errorGeneral = null; _errorPass = 'Ingresa tu contraseña'; });
+      setState(() => _errorPass = 'Ingresa tu contraseña');
       return;
     }
 
     setState(() { _cargando = true; _errorGeneral = null; _errorPass = null; });
 
-    try {
-      final response = await http.post(
-        Uri.parse(AppConfig.urlLogin),
-        body: {
-          'matricula':  matricula,
-          'contrasena': contrasena,         // ← ahora se manda al servidor
-        },
-      ).timeout(AppConfig.timeoutCorto);
+    // 1. Intentar sync en background si hay red (no bloqueante)
+    unawaited(_usuarioService.sincronizar());
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+    // 2. Login siempre contra BD local
+    final usuario = await _usuarioService.loginLocal(matricula, contrasena);
 
-        // El endpoint devuelve lista vacía o error si la contraseña no coincide
-        if (data is List && data.isNotEmpty) {
-          final nombre =
-              '${data[0]['Nombres']} ${data[0]['ApPaterno']} ${data[0]['ApMaterno']}';
-          await _guardarSesion(matricula, nombre, contrasena);
-          if (!mounted) return;
-          _irAHome(matricula, nombre);
-          return;
-        }
+    if (!mounted) return;
+    setState(() => _cargando = false);
 
-        // Si data['error'] o lista vacía → credenciales incorrectas
-        setState(() => _errorGeneral = 'Matrícula o contraseña incorrectos');
-      } else {
-        setState(() => _errorGeneral = 'Error del servidor (${response.statusCode})');
-      }
-    } catch (_) {
-      // Sin red → intento con sesión guardada
-      final prefs    = await SharedPreferences.getInstance();
-      final savedMat = prefs.getString('matricula');
-      final savedPass= prefs.getString('pass_hash'); // guardamos hash, no plain
-
-      if (savedMat == matricula && savedPass == _hashSimple(contrasena)) {
-        if (!mounted) return;
-        _irAHome(savedMat!, prefs.getString('nombre') ?? savedMat);
-        return;
-      }
-      setState(() => _errorGeneral = 'Sin conexión y credenciales no reconocidas');
-    } finally {
-      if (mounted) setState(() => _cargando = false);
+    if (usuario != null) {
+      _irAHome(usuario.matricula, usuario.nombreCompleto);
+    } else {
+      // ¿Hay usuarios en BD local?
+      final hayLocal = await _usuarioService.hayUsuariosLocales();
+      setState(() => _errorGeneral = hayLocal
+          ? 'Matrícula o contraseña incorrectos'
+          : 'Sin datos locales. Necesitas conectarte al menos una vez.');
     }
-  }
-
-  /// Hash muy simple (XOR + base64) para no guardar la contraseña en texto plano.
-  /// En producción usa bcrypt o similar, pero para SharedPreferences local
-  /// con acceso ya a la app es suficiente como capa básica.
-  String _hashSimple(String pass) {
-    final bytes = pass.codeUnits.map((c) => c ^ 0x5A).toList();
-    return base64Encode(bytes);
-  }
-
-  Future<void> _guardarSesion(
-      String matricula, String nombre, String contrasena) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('matricula', matricula);
-    await prefs.setString('nombre',    nombre);
-    await prefs.setString('pass_hash', _hashSimple(contrasena));
   }
 
   void _irAHome(String matricula, String nombre) {

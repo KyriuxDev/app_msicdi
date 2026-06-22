@@ -1,3 +1,4 @@
+import 'package:app_msicdi/models/usuario_local.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/reporte.dart';
@@ -21,7 +22,7 @@ class DatabaseHelper {
     final path = join(await getDatabasesPath(), 'reportes_msicdi.db');
     return await openDatabase(
       path,
-      version: 4,                          // v3 → v4: agrega personal_local
+      version: 5,                          // v4 → v5: agrega usuarios_local
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -31,6 +32,7 @@ class DatabaseHelper {
     await db.execute(_sqlReportes);
     await db.execute(_sqlDirectorio);
     await db.execute(_sqlPersonal);
+    await db.execute(_sqlUsuarios);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -43,6 +45,9 @@ class DatabaseHelper {
     }
     if (oldVersion < 4) {
       await db.execute(_sqlPersonal);
+    }
+    if (oldVersion < 5) {
+      await db.execute(_sqlUsuarios);
     }
   }
 
@@ -100,6 +105,18 @@ class DatabaseHelper {
       ts_sync            INTEGER DEFAULT 0
     )
   ''';
+
+  static const _sqlUsuarios = '''
+  CREATE TABLE usuarios_local (
+    matricula   TEXT PRIMARY KEY,
+    password    TEXT NOT NULL,
+    nombres     TEXT NOT NULL,
+    ap_paterno  TEXT NOT NULL,
+    ap_materno  TEXT,
+    email       TEXT,
+    rol         TEXT DEFAULT 'user'
+  )
+''';
 
   // ─── REPORTES ─────────────────────────────────────────────────────────────
 
@@ -226,7 +243,7 @@ class DatabaseHelper {
     );
     return maps.isEmpty ? null : Personal.fromMap(maps.first);
   }
-  
+
   /// Marca un reporte con error permanente de datos (ej: validación del servidor).
   /// El estado 'error_datos' no se reintenta en syncs automáticos.
   Future<void> marcarErrorPermanente(int id) async {
@@ -238,4 +255,34 @@ class DatabaseHelper {
       whereArgs: [id],
     );
   }
+
+  // ─── USUARIOS ─────────────────────────────────────────────────────────────
+
+  Future<void> upsertUsuarios(List<UsuarioLocal> lista) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final u in lista) {
+      batch.insert('usuarios_local', u.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<UsuarioLocal?> buscarUsuario(String matricula) async {
+    final db = await database;
+    final maps = await db.query(
+      'usuarios_local',
+      where: 'matricula = ?',
+      whereArgs: [matricula.trim()],
+      limit: 1,
+    );
+    return maps.isEmpty ? null : UsuarioLocal.fromMap(maps.first);
+  }
+
+  Future<int> contarUsuarios() async {
+    final db = await database;
+    final r = await db.rawQuery('SELECT COUNT(*) as c FROM usuarios_local');
+    return Sqflite.firstIntValue(r) ?? 0;
+  }
+
 }
